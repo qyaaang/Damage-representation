@@ -1,0 +1,4 @@
+/data/data_preprocessed/*
+/data/data_processed/segmented/*
+/data/info/*
+/results/*
