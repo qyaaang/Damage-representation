@@ -28,10 +28,10 @@ class Seq2Seq(nn.Module):
     def __init__(self, args):
         super(Seq2Seq, self).__init__()
         self.args = args
-        self.model = model_classes[args.model_name](args)
+        self.model = model_classes[args.model](args)
 
     def forward(self, encoder_inputs, encoder_hidden, encoder_cell, decoder_inputs):
-        if self.args.model_name == 'LSTM':
+        if self.args.model == 'LSTM':
             return self.model(encoder_inputs, encoder_hidden, encoder_cell, decoder_inputs)
         else:
             return self.model(encoder_inputs, encoder_hidden, decoder_inputs)

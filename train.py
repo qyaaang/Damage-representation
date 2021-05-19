@@ -29,7 +29,6 @@ info_path = './data/info'
 save_path = './results'
 
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-print(device)
 
 
 class BaseExperiment:
@@ -91,7 +90,7 @@ class BaseExperiment:
         return optimizer
 
     def file_name(self):
-        return '{}_{}_{}_{}_{}_{}_{}_{}'.format(self.args.model_name,
+        return '{}_{}_{}_{}_{}_{}_{}_{}'.format(self.args.model,
                                                 self.args.len_seg,
                                                 self.args.last_time_step,
                                                 self.args.optimizer,
@@ -120,10 +119,7 @@ class BaseExperiment:
                 dec_input_batch = dec_input_batch.to(device)
                 dec_output_batch = dec_output_batch.to(device)
                 pred, _ = self.model(enc_input_batch, h_0, c_0, dec_input_batch)
-                loss = 0
-                for i in range(len(dec_output_batch)):
-                    loss += self.criterion(pred[i], dec_output_batch[i])
-                loss = loss / enc_input_batch.size(0)
+                loss = self.criterion(pred, dec_output_batch)
                 losses += loss
                 optimizer.zero_grad()
                 loss.backward()
@@ -201,7 +197,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset', default='WN1', type=str)
     parser.add_argument('--data_source', default='segmented', type=str)
-    parser.add_argument('--model_name', default='RNN', type=str, help='RNN, LSTM, GRU')
+    parser.add_argument('--model', default='RNN', type=str, help='RNN, LSTM, GRU')
     parser.add_argument('--len_seg', default=100, type=int)
     parser.add_argument('--last_time_step', action='store_true', default=False)
     parser.add_argument('--optimizer', default='SGD', type=str)
