@@ -86,7 +86,7 @@ class DamageDetection:
 def main():
     # Hyper-parameters
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset', default='WN1', type=str)
+    parser.add_argument('--dataset', default='WN2', type=str)
     parser.add_argument('--data_source', default='denoised', type=str)
     parser.add_argument('--model', default='RNN', type=str, help='RNN, LSTM, GRU')
     parser.add_argument('--len_seg', default=400, type=int)
@@ -98,7 +98,7 @@ def main():
     parser.add_argument('--num_layers', default=1, type=int)
     parser.add_argument('--seed', default=23, type=int)
     parser.add_argument('--batch_size', default=128, type=int)
-    parser.add_argument('--num_epoch', default=10, type=int)
+    parser.add_argument('--num_epoch', default=1000, type=int)
     parser.add_argument('--learning_rate', default=0.1, type=float)
     args = parser.parse_args()
     detector = DamageDetection(args)
