@@ -26,7 +26,7 @@ else:
 with open('./data/info/folders.json') as f:
     folders = json.load(f)
 info_path = './data/info'
-white_noises = ['WN2']
+white_noises = ['WN{}'.format(i) for i in range(1, 22)]
 
 
 class Preprocessing:
