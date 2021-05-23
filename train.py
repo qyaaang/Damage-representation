@@ -41,16 +41,24 @@ class BaseExperiment:
         for arg in vars(args):
             print('>>> {}: {}'.format(arg, getattr(args, arg)))
         # Dataset
-        white_noise = dp.ReshapeDataset(white_noise=args.dataset,
-                                        data_path=data_path,
-                                        data_source=args.data_source,
-                                        len_seg=args.len_seg)
-        trainset, _ = white_noise()
-        trainset_eos = white_noise.decoder_input_init(trainset,
-                                                      last_time_step=args.last_time_step,
-                                                      is_trainset=True
-                                                      )
-        dataset = dp.Trainset(trainset, trainset_eos)
+        if args.embedding_size == 1:
+            white_noise = dp.ReshapeDataset(white_noise=args.dataset,
+                                            data_path=data_path,
+                                            data_source=args.data_source,
+                                            len_seg=args.len_seg)
+            trainset, _ = white_noise()
+            trainset_eos = white_noise.decoder_input_init(trainset,
+                                                          last_time_step=args.last_time_step,
+                                                          is_trainset=True
+                                                          )
+            dataset = dp.Trainset(trainset, trainset_eos)
+        else:
+            white_noise = dp.ReshapeDataset2(white_noise=args.dataset,
+                                             data_path=data_path,
+                                             data_source=args.data_source,
+                                             len_seg=args.len_seg)
+            trainset, _ = white_noise()
+            dataset = dp.Trainset2(trainset)
         encoder_inputs_train, decoder_inputs_train, decoder_outputs_train = dataset()
         self.data_loader = DataLoader(dp.SignalDataset(encoder_inputs_train,
                                                        decoder_inputs_train,
@@ -62,12 +70,12 @@ class BaseExperiment:
         self.spots = np.load('{}/spots.npy'.format(info_path))
         self.model = Seq2Seq(args).to(device)  # Seq2Seq model
         self.criterion = nn.MSELoss()
-        self.vis = visdom.Visdom(port=8097,
-                                 env='{}'.format(self.file_name()),
-                                 log_to_filename='{}/visualization/{}.log'.
-                                 format(save_path, self.file_name())
-                                 )
-        plt.figure(figsize=(15, 15))
+        # self.vis = visdom.Visdom(port=8097,
+        #                          env='{}'.format(self.file_name()),
+        #                          log_to_filename='{}/visualization/{}.log'.
+        #                          format(save_path, self.file_name())
+        #                          )
+        # plt.figure(figsize=(15, 15))
 
     def weights_init(self):
         for name, param in self.model.named_parameters():
@@ -92,7 +100,7 @@ class BaseExperiment:
     def file_name(self):
         return '{}_{}_{}_{}_{}_{}_{}_{}'.format(self.args.model,
                                                 self.args.len_seg,
-                                                self.args.last_time_step,
+                                                self.args.embedding_size,
                                                 self.args.optimizer,
                                                 self.args.learning_rate,
                                                 self.args.num_epoch,
@@ -134,19 +142,22 @@ class BaseExperiment:
                                                    self.file_name()
                                                    )
                 torch.save(self.model.state_dict(), path)
-            self.show_loss(losses, epoch)
-            self.show_reconstruction(epoch)
+            # self.show_loss(losses, epoch)
+            # self.show_reconstruction(epoch)
             print('\033[1;31mEpoch: {}\033[0m\t'
                   '\033[1;32mLoss: {:5f}\033[0m\t'
                   '\033[1;33mTime cost: {:2f}s\033[0m'
                   .format(epoch + 1, losses, t_1 - t_0))
-        plt.close()
+        # plt.close()
         lh['Loss'] = losses_all
         lh['Min loss'] = best_loss
         lh['Best epoch'] = best_epoch
         lh = json.dumps(lh, indent=2)
         with open('{}/learning history/{}.json'.format(save_path, self.file_name()), 'w') as f:
             f.write(lh)
+        self.show_results()
+        plt.savefig('./results/visualization/{}.png'.format(self.file_name()))
+        plt.show()
 
     def show_loss(self, loss, epoch):
         self.vis.line(Y=np.array([loss.item()]), X=np.array([epoch + 1]),
@@ -154,6 +165,17 @@ class BaseExperiment:
                       opts=dict(title='Train loss'),
                       update='append'
                       )
+
+    def flatten_data(self, x):
+        if self.args.embedding_size == 1:
+            x0 = x.view(-1)[0:2 * self.args.len_seg]
+        else:
+            x0 = x.squeeze(0)
+            tmp = x0[:, 0]
+            for idx in range(1, x0.size(1)):
+                tmp = torch.cat((tmp, x0[:, idx]), dim=0)
+            x0 = tmp[0:2 * self.args.len_seg]
+        return x0
 
     def show_reconstruction(self, epoch, seg_idx=10):
         plt.clf()
@@ -168,10 +190,12 @@ class BaseExperiment:
             x_ = self.data_loader.dataset.decoder_inputs[i * num_seg + seg_idx].unsqueeze(0)
             x = x.to(device)
             x_ = x_.to(device)
-            plt.plot(x.view(-1)[0:2 * self.args.len_seg].detach().cpu().numpy(), label='original')
+            x0 = self.flatten_data(x)
+            plt.plot(x0.detach().cpu().numpy(), label='original')
             plt.title('AC-{}-{}'.format(spot_l1, seg_idx))
             x_hat, _ = self.model(x, h_0, c_0, x_)
-            plt.plot(x_hat[0:2 * self.args.len_seg].view(-1).detach().cpu().numpy(), label='reconstruct')
+            x0_hat = self.flatten_data(x_hat)
+            plt.plot(x0_hat.detach().cpu().numpy(), label='reconstruct')
             plt.axvline(x=self.args.len_seg - 1, ls='--', c='k')
             # plt.axvline(x=2 * self.args.len_seg - 1, ls='--', c='k')
             plt.legend(loc='upper center')
@@ -181,15 +205,59 @@ class BaseExperiment:
             x_ = self.data_loader.dataset.decoder_inputs[(i + 6) * num_seg + seg_idx].unsqueeze(0)
             x = x.to(device)
             x_ = x_.to(device)
-            plt.plot(x.view(-1)[0:2 * self.args.len_seg].detach().cpu().numpy(), label='original')
+            x0 = self.flatten_data(x)
+            plt.plot(x0.detach().cpu().numpy(), label='original')
             plt.title('AC-{}-{}'.format(spot_l2, seg_idx))
             x_hat, _ = self.model(x, h_0, c_0, x_)
-            plt.plot(x_hat.view(-1)[0:2 * self.args.len_seg].detach().cpu().numpy(), label='reconstruct')
+            x0_hat = self.flatten_data(x_hat)
+            plt.plot(x0_hat.detach().cpu().numpy(), label='reconstruct')
             plt.axvline(x=self.args.len_seg - 1, ls='--', c='k')
             # plt.axvline(x=2 * self.args.len_seg - 1, ls='--', c='k')
             plt.legend(loc='upper center')
         plt.subplots_adjust(hspace=0.5)
         self.vis.matplot(plt, win='Reconstruction', opts=dict(title='Epoch: {}'.format(epoch + 1)))
+
+    def show_results(self, seg_idx=10):
+        path = '{}/models/{}.model'.format(save_path,
+                                           self.file_name()
+                                           )
+        model = Seq2Seq(self.args).to(device)
+        model.load_state_dict(torch.load(path, map_location=torch.device(device)))
+        model.eval()
+        fig, axs = plt.subplots(nrows=int(len(self.spots) / 2), ncols=2, figsize=(20, 20))
+        num_seg = int(self.data_loader.dataset.encoder_inputs.shape[0] / len(self.spots))
+        spots_l1, spots_l2 = np.hsplit(self.spots, 2)
+        h_0 = torch.zeros(1, 1, self.args.hidden_size).to(device)
+        c_0 = torch.zeros(1, 1, self.args.hidden_size).to(device)
+        for i, (spot_l1, spot_l2) in enumerate(zip(spots_l1, spots_l2)):
+            # 1 sensors
+            x = self.data_loader.dataset.encoder_inputs[i * num_seg + seg_idx].unsqueeze(0)
+            x_ = self.data_loader.dataset.decoder_inputs[i * num_seg + seg_idx].unsqueeze(0)
+            x = x.to(device)
+            x_ = x_.to(device)
+            x0 = self.flatten_data(x)
+            axs[i][0].plot(x0.detach().cpu().numpy(), label='original')
+            axs[i][0].set_title('AC-{}-{}'.format(spot_l1, seg_idx))
+            x_hat, _ = model(x, h_0, c_0, x_)
+            x0_hat = self.flatten_data(x_hat)
+            axs[i][0].plot(x0_hat.view(-1).detach().cpu().numpy(), label='reconstruct')
+            axs[i][0].axvline(x=self.args.len_seg - 1, ls='--', c='k')
+            axs[i][0].legend(loc='upper center')
+            # R sensors
+            x = self.data_loader.dataset.encoder_inputs[(i + 6) * num_seg + seg_idx].unsqueeze(0)
+            x_ = self.data_loader.dataset.decoder_inputs[(i + 6) * num_seg + seg_idx].unsqueeze(0)
+            x = x.to(device)
+            x_ = x_.to(device)
+            x0 = self.flatten_data(x)
+            axs[i][1].plot(x0.detach().cpu().numpy(), label='original')
+            axs[i][1].set_title('AC-{}-{}'.format(spot_l2, seg_idx))
+            x_hat, _ = model(x, h_0, c_0, x_)
+            x0_hat = self.flatten_data(x_hat)
+            axs[i][1].plot(x0_hat.view(-1).detach().cpu().numpy(), label='reconstruct')
+            axs[i][1].axvline(x=self.args.len_seg - 1, ls='--', c='k')
+            axs[i][1].legend(loc='upper center')
+        # plt.subplots_adjust(hspace=0.5)
+        plt.tight_layout()
 
 
 def main():
