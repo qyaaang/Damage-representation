@@ -21,6 +21,7 @@ class ReshapeDataset:
     def __init__(self, white_noise, data_path, data_source, len_seg):
         self.white_noise = white_noise
         self.data = np.load('{0}/{1}/{2}/{3}_{1}.npy'.format(data_path, data_source, len_seg, white_noise))
+        self.norm_data()
         self.len_seg = len_seg
         self.num_sensor = self.data.shape[0]
         self.num_channel = self.data.shape[1]
@@ -30,13 +31,11 @@ class ReshapeDataset:
     def __call__(self, *args, **kwargs):
         print('Preparing {} dataset...'.format(self.white_noise))
         trainset, testset = self.reshape_trainset(), self.reshape_testset()
-        trainset = trainset.astype(np.float32)
-        testset = testset.astype(np.float32)
-        trainset = torch.from_numpy(trainset)
-        trainset = self.normalization(trainset)
-        testset = torch.from_numpy(testset)
-        for i in range(testset.size(0)):
-            testset[i] = self.normalization(testset[i])
+        trainset = torch.tensor(trainset, dtype=torch.float32)
+        testset = torch.tensor(testset, dtype=torch.float32)
+        # trainset = self.normalization(trainset, dim=1)
+        # for i in range(testset.size(0)):
+        #     testset[i] = self.normalization(testset[i], dim=1)
         return trainset, testset
 
     def reshape_trainset(self):
@@ -85,26 +84,31 @@ class ReshapeDataset:
         else:
             return eos
 
+    def norm_data(self):
+        self.data = torch.tensor(self.data, dtype=torch.float32)
+        for i in range(self.data.size(0)):
+            for j in range(self.data.size(1)):
+                self.data[i, j] = self.normalization(self.data[i, j], dim=1)
+
     @staticmethod
     def normalization(original_data, dim=1):
         """
-        Normalize the signal to [-1, 1]
+        Normalize the data to [-1, 1]
         :param original_data:
         :param dim:
         :return:
         """
         if dim == 1:
             d_min = torch.min(original_data, dim=dim)[0]
-            for idx, j in enumerate(d_min):
-                if j < 0:
+            for idx, val in enumerate(d_min):
+                if val < 0:
                     original_data[idx, :] += torch.abs(d_min[idx])
-                    d_min = torch.min(original_data, dim=dim)[0]
         else:
             d_min = torch.min(original_data, dim=dim)[0]
-            for idx, j in enumerate(d_min):
-                if j < 0:
-                    original_data[idx, :] += torch.abs(d_min[idx])
-                    d_min = torch.min(original_data, dim=dim)[0]
+            for idx, val in enumerate(d_min):
+                if val < 0:
+                    original_data[:, idx] += torch.abs(d_min[idx])
+        d_min = torch.min(original_data, dim=dim)[0]
         d_max = torch.max(original_data, dim=dim)[0]
         dst = d_max - d_min
         if d_min.shape[0] == original_data.shape[0]:
