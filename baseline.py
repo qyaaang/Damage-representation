@@ -62,12 +62,12 @@ class Baseline:
         self.spots = np.load('{}/spots.npy'.format(info_path))
         self.model = AE(args).to(device)  # AutoEncoder
         self.criterion = nn.MSELoss()
-        self.vis = visdom.Visdom(port=8097,
-                                 env='{}'.format(self.file_name()),
-                                 log_to_filename='{}/visualization/{}.log'.
-                                 format(save_path, self.file_name())
-                                 )
-        plt.figure(figsize=(15, 15))
+        # self.vis = visdom.Visdom(port=8097,
+        #                          env='{}'.format(self.file_name()),
+        #                          log_to_filename='{}/visualization/{}.log'.
+        #                          format(save_path, self.file_name())
+        #                          )
+        # plt.figure(figsize=(15, 15))
 
     def weights_init(self):
         for op in self.model.modules():
@@ -125,19 +125,22 @@ class Baseline:
                 torch.save(self.model.state_dict(),
                            '{}/models/{}.model'.format(save_path, self.file_name())
                            )
-            self.show_loss(losses, epoch)
-            self.show_reconstruction(epoch)
+            # self.show_loss(losses, epoch)
+            # self.show_reconstruction(epoch)
             print('\033[1;31mEpoch: {}\033[0m\t'
                   '\033[1;32mLoss: {:5f}\033[0m\t'
                   '\033[1;33mTime cost: {:2f}s\033[0m'
                   .format(epoch + 1, losses, t_1 - t_0))
-        plt.close()
+        # plt.close()
         lh['Loss'] = losses_all
         lh['Min loss'] = best_loss
         lh['Best epoch'] = best_epoch
         lh = json.dumps(lh, indent=2)
         with open('{}/learning history/{}.json'.format(save_path, self.file_name()), 'w') as f:
             f.write(lh)
+        self.show_results()
+        plt.savefig('./results/visualization/{}.png'.format(self.file_name()))
+        plt.show()
 
     def show_loss(self, loss, epoch):
         self.vis.line(Y=np.array([loss.item()]), X=np.array([epoch + 1]),
@@ -174,6 +177,39 @@ class Baseline:
             plt.legend(loc='upper center')
         plt.subplots_adjust(hspace=0.5)
         self.vis.matplot(plt, win='Reconstruction', opts=dict(title='Epoch: {}'.format(epoch + 1)))
+
+    def show_results(self, seg_idx=10):
+        path = '{}/models/{}.model'.format(save_path,
+                                           self.file_name()
+                                           )
+        model = AE(self.args).to(device)
+        model.load_state_dict(torch.load(path, map_location=torch.device(device)))
+        model.eval()
+        fig, axs = plt.subplots(nrows=int(len(self.spots) / 2), ncols=2, figsize=(20, 20))
+        encoder_inputs = self.data_loader.dataset.encoder_inputs[:, 0:2 * self.args.len_seg, :].squeeze(2)
+        num_seg = int(encoder_inputs.shape[0] / len(self.spots))
+        spots_l1, spots_l2 = np.hsplit(self.spots, 2)
+        for i, (spot_l1, spot_l2) in enumerate(zip(spots_l1, spots_l2)):
+            # 1 sensors
+            x = encoder_inputs[i * num_seg + seg_idx].unsqueeze(0)
+            x = x.to(device)
+            axs[i][0].plot(x.view(-1).detach().cpu().numpy(), label='original')
+            axs[i][0].set_title('AC-{}-{}'.format(spot_l1, seg_idx))
+            _, x_hat = self.model(x)
+            axs[i][0].plot(x_hat.view(-1).detach().cpu().numpy(), label='reconstruct')
+            axs[i][0].axvline(x=self.args.len_seg - 1, ls='--', c='k')
+            axs[i][0].legend(loc='upper center')
+            # R sensors
+            x = encoder_inputs[(i + 6) * num_seg + seg_idx].unsqueeze(0)
+            x = x.to(device)
+            axs[i][1].plot(x.view(-1).detach().cpu().numpy(), label='original')
+            axs[i][1].set_title('AC-{}-{}'.format(spot_l2, seg_idx))
+            _, x_hat = self.model(x)
+            axs[i][1].plot(x_hat.view(-1).detach().cpu().numpy(), label='reconstruct')
+            axs[i][1].axvline(x=self.args.len_seg - 1, ls='--', c='k')
+            axs[i][1].legend(loc='upper center')
+        # plt.subplots_adjust(hspace=0.5)
+        plt.tight_layout()
 
 
 if __name__ == '__main__':
