@@ -21,7 +21,7 @@ import time
 import json
 import argparse
 from models.Seq2Seq import Seq2Seq
-import visdom
+# import visdom
 
 
 data_path = './data/data_processed'
