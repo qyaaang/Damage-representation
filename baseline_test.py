@@ -17,6 +17,7 @@ import data_processing as dp
 import argparse
 import json
 from models.AE import AE
+import os
 
 
 data_path = './data/data_processed'
@@ -55,31 +56,59 @@ class DamageDetection:
         return '{}_{}_{}_{}_{}_{}_{}'.format(self.args.model,
                                              self.args.len_seg,
                                              self.args.optimizer,
-                                             self.args.learning_rate,
+                                             self.args.lr,
                                              self.args.num_epoch,
                                              self.args.dim_feature,
                                              self.args.batch_size,
                                              )
 
+    def prob_damage(self, err):
+        return 1 - np.exp(- self.args.alpha * err)
+
     def test(self):
-        path = '{}/models/{}.model'.format(save_path,
-                                           self.file_name()
-                                           )
+        path = '{}/models/{}/{}.model'.format(save_path, self.args.model, self.file_name())
         self.model.load_state_dict(torch.load(path, map_location=torch.device(device)))  # Load AutoEncoder
         self.model.eval()
+        prob_d = {}
+        size_0 = self.encoder_inputs_test.size(0)
+        size_1 = self.encoder_inputs_test.size(1)
+        latent = torch.zeros(size_0 * size_1, self.args.dim_feature)
+        idx = 0
         with torch.no_grad():
             for i, spot in enumerate(self.spots):
+                prob_d[spot] = {}
                 x = self.encoder_inputs_test[i].squeeze(2).to(device)
                 x = x[:, 0: 2 * self.args.len_seg]
-                _, x_hat = self.model(x)
+                x_size = x.size(0)
+                z, x_hat = self.model(x)
+                latent[idx: idx + x_size] = z
                 loss = ((x_hat - x) ** 2).mean()
-                print(loss.item(), spot)
+                p_d = self.prob_damage(loss.item())  # Probability of damage
+                prob_d[spot]['Reconstruction loss'] = loss.item()
+                prob_d[spot]['Probability of damage'] = p_d
+                print('\033[1;34m[{}]\033[0m\t'
+                      '\033[1;32mReconstruction loss: {:5f}\033[0m\t'
+                      '\033[1;31mProbability of damage: {:5f}\033[0m'.
+                      format(spot, loss.item(), p_d)
+                      )
+                idx += x_size
+            prob_d = json.dumps(prob_d, indent=2)
+            if not os.path.exists('{}/probability of damage/{}'.format(save_path, self.args.model)):
+                os.mkdir('{}/probability of damage/{}'.format(save_path, self.args.model))
+            with open('{}/probability of damage/{}/{}_{}.json'.
+                              format(save_path, self.args.model, self.args.dataset, self.file_name()), 'w') as f:
+                f.write(prob_d)
+            if not os.path.exists('{}/latent/test/{}'.format(save_path, self.args.model)):
+                os.mkdir('{}/latent/test/{}'.format(save_path, self.args.model))
+            np.save('{}/latent/test/{}/{}_{}.npy'.
+                    format(save_path, self.args.model, self.args.dataset, self.file_name()), latent
+                    )
 
 
 def main():
     # Hyper-parameters
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset', default='WN2', type=str)
+    parser.add_argument('--dataset', default='WN3', type=str)
     parser.add_argument('--data_source', default='denoised', type=str)
     parser.add_argument('--model', default='MLP', type=str)
     parser.add_argument('--len_seg', default=400, type=int)
@@ -87,9 +116,10 @@ def main():
     parser.add_argument('--dim_feature', default=128, type=int)
     parser.add_argument('--optimizer', default='SGD', type=str)
     parser.add_argument('--seed', default=23, type=int)
-    parser.add_argument('--batch_size', default=128, type=int)
-    parser.add_argument('--num_epoch', default=1000, type=int)
-    parser.add_argument('--learning_rate', default=0.1, type=float)
+    parser.add_argument('--batch_size', default=256, type=int)
+    parser.add_argument('--num_epoch', default=10000, type=int)
+    parser.add_argument('--lr', default=0.1, type=float)
+    parser.add_argument('--alpha', default=5.0, type=float)
     args = parser.parse_args()
     detector = DamageDetection(args)
     detector()
