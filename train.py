@@ -21,7 +21,8 @@ import time
 import json
 import argparse
 from models.Seq2Seq import Seq2Seq
-# import visdom
+import os
+import visdom
 
 
 data_path = './data/data_processed'
@@ -88,12 +89,13 @@ class BaseExperiment:
         assert self.args.optimizer == 'SGD' or 'Adam'
         if self.args.optimizer == 'SGD':
             optimizer = optim.SGD(self.model.parameters(),
-                                  lr=self.args.learning_rate
+                                  lr=self.args.lr,
+                                  momentum=self.args.momentum
                                   )
         else:
             optimizer = optim.Adam(self.model.parameters(),
                                    betas=(0.5, 0.999),
-                                   lr=self.args.learning_rate
+                                   lr=self.args.lr
                                    )
         return optimizer
 
@@ -102,7 +104,7 @@ class BaseExperiment:
                                                 self.args.len_seg,
                                                 self.args.embedding_size,
                                                 self.args.optimizer,
-                                                self.args.learning_rate,
+                                                self.args.lr,
                                                 self.args.num_epoch,
                                                 self.args.hidden_size,
                                                 self.args.batch_size,
@@ -117,18 +119,21 @@ class BaseExperiment:
         losses_all = []
         for epoch in range(self.args.num_epoch):
             losses = 0
+            latent = torch.zeros(self.data_loader.dataset.encoder_inputs.size(0), self.args.hidden_size)
             t_0 = time.time()
+            idx = 0
             for enc_input_batch, dec_input_batch, dec_output_batch in self.data_loader:
-                # Initialize the hidden state
-                # h_0 : [num_layers(=1), batch_size, dim_hidden]
+                batch_size = enc_input_batch.size(0)  # Batch size
+                # Initialize the hidden state h_0 : [num_layers(=1), batch_size, dim_hidden]
                 h_0 = torch.zeros(self.args.num_layers, enc_input_batch.size(0), self.args.hidden_size).to(device)
                 c_0 = torch.zeros(self.args.num_layers, enc_input_batch.size(0), self.args.hidden_size).to(device)
                 enc_input_batch = enc_input_batch.to(device)
                 dec_input_batch = dec_input_batch.to(device)
                 dec_output_batch = dec_output_batch.to(device)
-                pred, _ = self.model(enc_input_batch, h_0, c_0, dec_input_batch)
+                pred, h_t = self.model(enc_input_batch, h_0, c_0, dec_input_batch)
                 loss = self.criterion(pred, dec_output_batch)
                 losses += loss
+                latent[idx: idx + batch_size] = h_t.squeeze(0)
                 optimizer.zero_grad()
                 loss.backward()
                 nn.utils.clip_grad_norm_(self.model.parameters(), 5)  # Gradient clip
@@ -138,10 +143,14 @@ class BaseExperiment:
             if losses.item() < best_loss:
                 best_loss = losses.item()
                 best_epoch = epoch + 1
-                path = '{}/models/{}.model'.format(save_path,
-                                                   self.file_name()
-                                                   )
+                latent = latent.detach().numpy()
+                if not os.path.exists('{}/models/{}'.format(save_path, self.args.model)):
+                    os.mkdir('{}/models/{}'.format(save_path, self.args.model))
+                path = '{}/models/{}/{}.model'.format(save_path, self.args.model, self.file_name())
                 torch.save(self.model.state_dict(), path)
+                if not os.path.exists('{}/latent/{}'.format(save_path, self.args.model)):
+                    os.mkdir('{}/latent/{}'.format(save_path, self.args.model))
+                np.save('{}/latent/{}/{}.npy'.format(save_path, self.args.model, self.file_name()), latent)
             # self.show_loss(losses, epoch)
             # self.show_reconstruction(epoch)
             print('\033[1;31mEpoch: {}\033[0m\t'
@@ -153,10 +162,14 @@ class BaseExperiment:
         lh['Min loss'] = best_loss
         lh['Best epoch'] = best_epoch
         lh = json.dumps(lh, indent=2)
-        with open('{}/learning history/{}.json'.format(save_path, self.file_name()), 'w') as f:
+        if not os.path.exists('{}/learning history/{}'.format(save_path, self.args.model)):
+            os.mkdir('{}/learning history/{}'.format(save_path, self.args.model))
+        with open('{}/learning history/{}/{}.json'.format(save_path, self.args.model, self.file_name()), 'w') as f:
             f.write(lh)
         self.show_results()
-        plt.savefig('./results/visualization/{}.png'.format(self.file_name()))
+        if not os.path.exists('{}/visualization/{}'.format(save_path, self.args.model)):
+            os.mkdir('{}/visualization/{}'.format(save_path, self.args.model))
+        plt.savefig('./results/visualization/{}/{}.png'.format(self.args.model, self.file_name()))
         plt.show()
 
     def show_loss(self, loss, epoch):
@@ -218,9 +231,7 @@ class BaseExperiment:
         self.vis.matplot(plt, win='Reconstruction', opts=dict(title='Epoch: {}'.format(epoch + 1)))
 
     def show_results(self, seg_idx=10):
-        path = '{}/models/{}.model'.format(save_path,
-                                           self.file_name()
-                                           )
+        path = '{}/models/{}/{}.model'.format(save_path, self.args.model, self.file_name())
         model = Seq2Seq(self.args).to(device)
         model.load_state_dict(torch.load(path, map_location=torch.device(device)))
         model.eval()
@@ -264,19 +275,20 @@ def main():
     # Hyper-parameters
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset', default='WN1', type=str)
-    parser.add_argument('--data_source', default='segmented', type=str)
+    parser.add_argument('--data_source', default='denoised', type=str)
     parser.add_argument('--model', default='RNN', type=str, help='RNN, LSTM, GRU')
-    parser.add_argument('--len_seg', default=100, type=int)
+    parser.add_argument('--len_seg', default=400, type=int)
     parser.add_argument('--last_time_step', action='store_true', default=False)
     parser.add_argument('--optimizer', default='SGD', type=str)
-    parser.add_argument('--input_size', default=1, type=int)
+    parser.add_argument('--momentum', default=0.9, type=float)
+    parser.add_argument('--input_size', default=2, type=int)
     parser.add_argument('--hidden_size', default=128, type=int)
-    parser.add_argument('--embedding_size', default=1, type=int)
+    parser.add_argument('--embedding_size', default=2, type=int)
     parser.add_argument('--num_layers', default=1, type=int)
     parser.add_argument('--seed', default=23, type=int)
-    parser.add_argument('--batch_size', default=8, type=int)
-    parser.add_argument('--num_epoch', default=100, type=int)
-    parser.add_argument('--learning_rate', default=0.1, type=float)
+    parser.add_argument('--batch_size', default=256, type=int)
+    parser.add_argument('--num_epoch', default=1000, type=int)
+    parser.add_argument('--lr', default=0.1, type=float)
     args = parser.parse_args()
     exp = BaseExperiment(args)
     exp.train()
