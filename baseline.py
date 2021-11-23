@@ -21,6 +21,7 @@ import time
 import json
 import argparse
 from models.AE import AE
+import os
 import visdom
 
 
@@ -78,12 +79,12 @@ class Baseline:
         assert self.args.optimizer == 'SGD' or 'Adam'
         if self.args.optimizer == 'SGD':
             optimizer = optim.SGD(self.model.parameters(),
-                                  lr=self.args.learning_rate
+                                  lr=self.args.lr
                                   )
         else:
             optimizer = optim.Adam(self.model.parameters(),
                                    betas=(0.5, 0.999),
-                                   lr=self.args.learning_rate
+                                   lr=self.args.lr
                                    )
         return optimizer
 
@@ -91,7 +92,7 @@ class Baseline:
         return '{}_{}_{}_{}_{}_{}_{}'.format(self.args.model,
                                              self.args.len_seg,
                                              self.args.optimizer,
-                                             self.args.learning_rate,
+                                             self.args.lr,
                                              self.args.num_epoch,
                                              self.args.dim_feature,
                                              self.args.batch_size,
@@ -106,13 +107,17 @@ class Baseline:
         losses_all = []
         for epoch in range(self.args.num_epoch):
             losses = 0
+            latent = torch.zeros(self.data_loader.dataset.encoder_inputs.size(0), self.args.dim_feature)
             t_0 = time.time()
+            idx = 0
             for enc_input_batch, _, _ in self.data_loader:
+                batch_size = enc_input_batch.size(0)  # Batch size
                 enc_input_batch = enc_input_batch.squeeze(2).to(device)
                 x = enc_input_batch[:, 0: 2 * self.args.len_seg]
                 z, x_hat = self.model(x)
                 loss = self.criterion(x, x_hat)
                 losses += loss
+                latent[idx: idx + batch_size] = z
                 optimizer.zero_grad()
                 loss.backward()
                 nn.utils.clip_grad_norm_(self.model.parameters(), 5)  # Gradient clip
@@ -122,9 +127,14 @@ class Baseline:
             if losses.item() < best_loss:
                 best_loss = losses.item()
                 best_epoch = epoch + 1
-                torch.save(self.model.state_dict(),
-                           '{}/models/{}.model'.format(save_path, self.file_name())
-                           )
+                latent = latent.detach().numpy()
+                if not os.path.exists('{}/models/{}'.format(save_path, self.args.model)):
+                    os.mkdir('{}/models/{}'.format(save_path, self.args.model))
+                path = '{}/models/{}/{}.model'.format(save_path, self.args.model, self.file_name())
+                torch.save(self.model.state_dict(), path)
+                if not os.path.exists('{}/latent/{}'.format(save_path, self.args.model)):
+                    os.mkdir('{}/latent/{}'.format(save_path, self.args.model))
+                np.save('{}/latent/{}/{}.npy'.format(save_path, self.args.model, self.file_name()), latent)
             # self.show_loss(losses, epoch)
             # self.show_reconstruction(epoch)
             print('\033[1;31mEpoch: {}\033[0m\t'
@@ -136,10 +146,14 @@ class Baseline:
         lh['Min loss'] = best_loss
         lh['Best epoch'] = best_epoch
         lh = json.dumps(lh, indent=2)
-        with open('{}/learning history/{}.json'.format(save_path, self.file_name()), 'w') as f:
+        if not os.path.exists('{}/learning history/{}'.format(save_path, self.args.model)):
+            os.mkdir('{}/learning history/{}'.format(save_path, self.args.model))
+        with open('{}/learning history/{}/{}.json'.format(save_path, self.args.model, self.file_name()), 'w') as f:
             f.write(lh)
         self.show_results()
-        plt.savefig('./results/visualization/{}.png'.format(self.file_name()))
+        if not os.path.exists('{}/visualization/{}'.format(save_path, self.args.model)):
+            os.mkdir('{}/visualization/{}'.format(save_path, self.args.model))
+        plt.savefig('./results/visualization/{}/{}.png'.format(self.args.model, self.file_name()))
         plt.show()
 
     def show_loss(self, loss, epoch):
@@ -179,9 +193,7 @@ class Baseline:
         self.vis.matplot(plt, win='Reconstruction', opts=dict(title='Epoch: {}'.format(epoch + 1)))
 
     def show_results(self, seg_idx=10):
-        path = '{}/models/{}.model'.format(save_path,
-                                           self.file_name()
-                                           )
+        path = '{}/models/{}/{}.model'.format(save_path, self.args.model, self.file_name())
         model = AE(self.args).to(device)
         model.load_state_dict(torch.load(path, map_location=torch.device(device)))
         model.eval()
@@ -223,9 +235,9 @@ if __name__ == '__main__':
     parser.add_argument('--dim_feature', default=128, type=int)
     parser.add_argument('--optimizer', default='SGD', type=str)
     parser.add_argument('--seed', default=23, type=int)
-    parser.add_argument('--batch_size', default=8, type=int)
-    parser.add_argument('--num_epoch', default=100, type=int)
-    parser.add_argument('--learning_rate', default=0.1, type=float)
+    parser.add_argument('--batch_size', default=256, type=int)
+    parser.add_argument('--num_epoch', default=1000, type=int)
+    parser.add_argument('--lr', default=0.1, type=float)
     args = parser.parse_args()
     exp = Baseline(args)
     exp.train()
