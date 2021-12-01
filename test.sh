@@ -1,10 +1,12 @@
 datasets=("WN2" "WN11" "WN17" "WN21")
+alphas=(5 15 20 30)
 models=("RNN" "LSTM" "GRU")
 len_segs=(300 400 500)
 hidden_sizes=128
 optimizer="SGD"
 num_epoch=1000
 lr=0.1
+idx=0
 for dataset in "${datasets[@]}"; do
   for model in "${models[@]}"; do
     for len_seg in "${len_segs[@]}"; do
@@ -12,7 +14,8 @@ for dataset in "${datasets[@]}"; do
              "$dataset" "$model" "$len_seg"
       python3 test.py --dataset "$dataset"  --model "$model" \
                       --len_seg "$len_seg"  --optimizer "$optimizer" --hidden_size "$hidden_sizes" \
-                      --num_epoch $num_epoch --lr $lr  --last_time_step
+                      --num_epoch $num_epoch --lr $lr  --last_time_step  --alpha "${alphas[idx]}"
     done
   done
+  idx=$((idx+1))
 done
